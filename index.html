@@ -1,0 +1,988 @@
+<!--
+  需要準備 head.glb 檔案，並使用 local server (如 python -m http.server) 來運行。
+  GLTF/GLB 模型不可直接用 file:// 穩定載入；請將 head.glb 與本 index.html 放在同一層。
+-->
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TWS Head Shadowing Effect PoC</title>
+  <style>
+    :root {
+      --panel: rgba(12, 18, 28, 0.78);
+      --panel-strong: rgba(17, 25, 39, 0.92);
+      --line: rgba(255, 255, 255, 0.18);
+      --text: #edf4ff;
+      --muted: #a8b5c7;
+      --accent: #ffbe3d;
+      --hot: #ff4d2e;
+      --cold: #1d46ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #05070b;
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hud {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      z-index: 10;
+      width: min(430px, calc(100vw - 36px));
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+      box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(16px);
+    }
+
+    .title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.28;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .badge {
+      flex: 0 0 auto;
+      padding: 5px 8px;
+      border: 1px solid rgba(255, 190, 61, 0.38);
+      border-radius: 999px;
+      color: #ffd990;
+      background: rgba(255, 190, 61, 0.1);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: grid;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .control {
+      display: grid;
+      gap: 9px;
+    }
+
+    .label-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .value {
+      min-width: 58px;
+      color: var(--text);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      height: 22px;
+      margin: 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 5px;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .model-status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255, 190, 61, 0.32);
+      border-radius: 8px;
+      background: rgba(255, 190, 61, 0.08);
+      color: #ffd990;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .model-status.ok {
+      border-color: rgba(102, 224, 166, 0.34);
+      background: rgba(102, 224, 166, 0.08);
+      color: #9cf0c7;
+    }
+
+    .model-status.warn {
+      border-color: rgba(255, 190, 61, 0.38);
+      background: rgba(255, 190, 61, 0.09);
+      color: #ffd990;
+    }
+
+    .model-status.error {
+      border-color: rgba(255, 92, 92, 0.36);
+      background: rgba(255, 92, 92, 0.1);
+      color: #ffb0b0;
+    }
+
+    .legend {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 10;
+      width: min(320px, calc(100vw - 36px));
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(16px);
+    }
+
+    .legend-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .bar {
+      height: 12px;
+      margin: 10px 0 8px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 999px;
+      background: linear-gradient(90deg, #07143d, var(--cold), #39a7ff, #ffdc45, var(--hot));
+    }
+
+    .legend-scale {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .readout {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .corner {
+      position: fixed;
+      right: 18px;
+      top: 18px;
+      z-index: 10;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(12, 18, 28, 0.62);
+      color: var(--muted);
+      font-size: 12px;
+      backdrop-filter: blur(12px);
+      pointer-events: none;
+    }
+
+    @media (max-width: 720px) {
+      .hud {
+        top: 10px;
+        left: 10px;
+        width: calc(100vw - 20px);
+        padding: 14px;
+      }
+
+      .corner {
+        display: none;
+      }
+
+      .legend {
+        left: 10px;
+        right: auto;
+        bottom: 10px;
+        width: calc(100vw - 20px);
+      }
+
+      .metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <section class="hud" aria-label="TWS position controls">
+    <div class="title-row">
+      <h1>TWS 耳機人頭遮蔽效應 3D PoC</h1>
+      <div class="badge">Shader Ray Test</div>
+    </div>
+
+    <div class="controls">
+      <label class="control">
+        <span class="label-line">
+          <span>距離 Distance - Free Space to Ear</span>
+          <span class="value" id="distanceValue">35.0</span>
+        </span>
+        <input id="distance" type="range" min="10.1" max="35.0" step="0.1" value="35.0" />
+      </label>
+    </div>
+
+    <div class="metrics" aria-label="Simulation constants">
+      <div class="metric">
+        <span>Head R</span>
+        <strong>10.0</strong>
+      </div>
+      <div class="metric">
+        <span>Tx Orbit</span>
+        <strong id="txOrbitReadout">35.0</strong>
+      </div>
+      <div class="metric">
+        <span>Pattern r</span>
+        <strong id="patternRReadout">5.0</strong>
+      </div>
+      <div class="metric">
+        <span>Tx x,y,z</span>
+        <strong id="txReadout">0,0,0</strong>
+      </div>
+      <div class="metric">
+        <span>Coupling</span>
+        <strong id="shadowReadout">--</strong>
+      </div>
+      <div class="metric">
+        <span>η Efficiency</span>
+        <strong id="efficiencyReadout">50%</strong>
+      </div>
+      <div class="metric">
+        <span>Conducted Pwr</span>
+        <strong>2.0 dBm</strong>
+      </div>
+      <div class="metric">
+        <span>TRP</span>
+        <strong id="trpReadout">-1.0 dBm</strong>
+      </div>
+    </div>
+
+    <div class="model-status" id="modelStatus">正在載入 ./head.glb / ./head.GLB...</div>
+  </section>
+
+  <aside class="legend" aria-label="Signal attenuation legend">
+    <div class="legend-title">
+      <span>耦合熱力圖</span>
+      <span>Near Field</span>
+    </div>
+    <div class="bar"></div>
+    <div class="legend-scale">
+      <span>吸收紫藍</span>
+      <span>高強度紅黃</span>
+    </div>
+    <div class="readout">
+      畫面中的頭部由 ./head.glb 或 ./head.GLB 載入；Shader 運算使用中心在原點、半徑 10 的介電質近場耦合區。場型頂點越靠近頭部表面，塌陷與高頻扭曲越強，紫藍區表示強吸收與能量塌縮。
+    </div>
+  </aside>
+
+  <div class="corner">拖曳旋轉 · 滾輪縮放 · 右鍵平移</div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const HEAD_RADIUS = 10.0;
+    const PATTERN_RADIUS = 5.0;
+    const DISTANCE_MIN = 10.1;
+    const DISTANCE_MAX = 35.0;
+    const DEFAULT_DISTANCE = 35.0;
+    const fixedAzimuth = 90 * (Math.PI / 180);
+    const fixedElevation = 0;
+
+    // 天線效率參數
+    const ETA_FREE = 0.50;    // 自由空間效率 50%
+    const ETA_BODY = 0.28;    // 貼近人體效率 <30%
+    const TRANSITION_WIDTH = 3.0; // 近場過渡區寬度
+    const CONDUCTED_POWER_DBM = 2.0; // 傳導發射功率 2 dBm
+
+    const app = document.getElementById('app');
+    const distanceSlider = document.getElementById('distance');
+    const distanceValue = document.getElementById('distanceValue');
+    const txOrbitReadout = document.getElementById('txOrbitReadout');
+    const txReadout = document.getElementById('txReadout');
+    const shadowReadout = document.getElementById('shadowReadout');
+    const efficiencyReadout = document.getElementById('efficiencyReadout');
+    const patternRReadout = document.getElementById('patternRReadout');
+    const trpReadout = document.getElementById('trpReadout');
+    const modelStatus = document.getElementById('modelStatus');
+
+    distanceSlider.value = String(DEFAULT_DISTANCE);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070b);
+    scene.fog = new THREE.FogExp2(0x05070b, 0.012);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 250);
+    camera.position.set(26, 18, 32);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    app.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 18;
+    controls.maxDistance = 82;
+    controls.target.set(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.72));
+    scene.add(new THREE.HemisphereLight(0x9fc8ff, 0x1b1020, 1.45));
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.6);
+    keyLight.position.set(22, 30, 16);
+    scene.add(keyLight);
+
+    const rimLight = new THREE.DirectionalLight(0x9ec9ff, 1.35);
+    rimLight.position.set(-18, 14, -24);
+    scene.add(rimLight);
+
+    const fillLight = new THREE.PointLight(0x4da3ff, 28, 80);
+    fillLight.position.set(-18, 8, -18);
+    scene.add(fillLight);
+
+    const grid = new THREE.GridHelper(64, 32, 0x24415f, 0x142235);
+    grid.position.y = -12;
+    grid.material.transparent = true;
+    grid.material.opacity = 0.42;
+    scene.add(grid);
+
+    const axes = new THREE.AxesHelper(15);
+    axes.position.y = -11.9;
+    scene.add(axes);
+
+    const gltfLoader = new GLTFLoader();
+    const headModelGroup = new THREE.Group();
+    headModelGroup.name = 'Visible GLTF head model';
+    scene.add(headModelGroup);
+
+    function setModelStatus(message, state) {
+      modelStatus.textContent = message;
+      modelStatus.classList.remove('ok', 'warn', 'error');
+      if (state) {
+        modelStatus.classList.add(state);
+      }
+    }
+
+    function fitModelToCollisionSphere(model) {
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      const maxAxis = Math.max(size.x, size.y, size.z);
+      const targetDiameter = HEAD_RADIUS * 2.0;
+      const scale = maxAxis > 0 ? targetDiameter / maxAxis : 1.0;
+
+      model.position.sub(center);
+      model.scale.multiplyScalar(scale);
+      model.updateMatrixWorld(true);
+
+      const fittedBox = new THREE.Box3().setFromObject(model);
+      const fittedCenter = new THREE.Vector3();
+      fittedBox.getCenter(fittedCenter);
+      model.position.sub(fittedCenter);
+    }
+
+    function createFallbackHeadModel() {
+      const group = new THREE.Group();
+      group.name = 'Procedural fallback head';
+
+      const skinMaterial = new THREE.MeshStandardMaterial({
+        color: 0xd79a7a,
+        roughness: 0.68,
+        metalness: 0.0,
+        emissive: 0x26110a,
+        emissiveIntensity: 0.08
+      });
+
+      const detailMaterial = new THREE.MeshStandardMaterial({
+        color: 0x9f6048,
+        roughness: 0.82,
+        metalness: 0.0
+      });
+
+      const headMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 72, 48),
+        skinMaterial
+      );
+      headMesh.scale.set(9.55, 9.25, 6.08);
+      headMesh.position.set(0, 0.0, 0.35);
+      group.add(headMesh);
+
+      const nose = new THREE.Mesh(
+        new THREE.ConeGeometry(0.82, 2.25, 36),
+        skinMaterial
+      );
+      nose.rotation.x = -Math.PI * 0.5;
+      nose.position.set(0, 0.1, -6.36);
+      group.add(nose);
+
+      const leftEar = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 36, 24),
+        detailMaterial
+      );
+      leftEar.scale.set(0.36, 1.35, 0.42);
+      leftEar.position.set(-9.95, 0.0, 0.35);
+      group.add(leftEar);
+
+      const rightEar = leftEar.clone();
+      rightEar.position.x = 9.95;
+      group.add(rightEar);
+
+      const neck = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.0, 2.3, 2.5, 42),
+        skinMaterial
+      );
+      neck.position.set(0, -10.05, 0.95);
+      group.add(neck);
+
+      // ====== 眼睛 ======
+      const eyeWhiteMaterial = new THREE.MeshStandardMaterial({
+        color: 0xf5f5f0,
+        roughness: 0.3,
+        metalness: 0.0
+      });
+      const irisMaterial = new THREE.MeshStandardMaterial({
+        color: 0x2a1a0e,
+        roughness: 0.4,
+        metalness: 0.05
+      });
+      const pupilMaterial = new THREE.MeshStandardMaterial({
+        color: 0x0a0a0a,
+        roughness: 0.2,
+        metalness: 0.0
+      });
+
+      // 眼白（略扁的球體）
+      function createEye(xPos) {
+        const eyeGroup = new THREE.Group();
+
+        const sclera = new THREE.Mesh(
+          new THREE.SphereGeometry(0.72, 32, 24),
+          eyeWhiteMaterial
+        );
+        sclera.scale.set(1.3, 0.85, 0.55);
+        eyeGroup.add(sclera);
+
+        // 虹膜
+        const iris = new THREE.Mesh(
+          new THREE.SphereGeometry(0.38, 24, 18),
+          irisMaterial
+        );
+        iris.scale.set(1.0, 1.0, 0.35);
+        iris.position.z = -0.28;
+        eyeGroup.add(iris);
+
+        // 瞳孔
+        const pupil = new THREE.Mesh(
+          new THREE.SphereGeometry(0.18, 20, 14),
+          pupilMaterial
+        );
+        pupil.scale.set(1.0, 1.0, 0.3);
+        pupil.position.z = -0.38;
+        eyeGroup.add(pupil);
+
+        eyeGroup.position.set(xPos, 1.2, -5.65);
+        return eyeGroup;
+      }
+
+      group.add(createEye(-2.4));  // 左眼
+      group.add(createEye(2.4));   // 右眼
+
+      // ====== 嘴巴 ======
+      const mouthMaterial = new THREE.MeshStandardMaterial({
+        color: 0x8b3a3a,
+        roughness: 0.55,
+        metalness: 0.0
+      });
+
+      // 上唇（用 torus 弧線模擬微笑曲線）
+      const upperLip = new THREE.Mesh(
+        new THREE.TorusGeometry(1.6, 0.18, 12, 32, Math.PI),
+        mouthMaterial
+      );
+      upperLip.rotation.x = Math.PI;
+      upperLip.position.set(0, -2.8, -5.85);
+      group.add(upperLip);
+
+      // 下唇（稍寬的弧線）
+      const lowerLipMaterial = new THREE.MeshStandardMaterial({
+        color: 0xa34848,
+        roughness: 0.5,
+        metalness: 0.0
+      });
+      const lowerLip = new THREE.Mesh(
+        new THREE.TorusGeometry(1.3, 0.15, 12, 28, Math.PI * 0.8),
+        lowerLipMaterial
+      );
+      lowerLip.rotation.x = 0;
+      lowerLip.rotation.z = Math.PI * 0.1;
+      lowerLip.position.set(0.0, -3.35, -5.7);
+      group.add(lowerLip);
+
+      group.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = false;
+          child.receiveShadow = false;
+        }
+      });
+
+      return group;
+    }
+
+    function attachFallbackHeadModel(failures) {
+      const fallback = createFallbackHeadModel();
+      headModelGroup.clear();
+      headModelGroup.add(fallback);
+      updateTxPosition();
+      setModelStatus(
+        `GLB 載入失敗，已改用內建人頭 fallback。錯誤：${failures.join('；')}`,
+        'warn'
+      );
+    }
+
+    function attachHeadModel(gltf, sourcePath) {
+        const model = gltf.scene;
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = false;
+            child.receiveShadow = false;
+            child.frustumCulled = true;
+
+            if (child.material) {
+              child.material.side = THREE.FrontSide;
+              child.material.needsUpdate = true;
+            }
+          }
+        });
+
+        fitModelToCollisionSphere(model);
+        headModelGroup.clear();
+        headModelGroup.add(model);
+        updateTxPosition();
+        setModelStatus(`已載入 ./${sourcePath}，可見人頭模型使用半徑 10 的隱形碰撞球做遮蔽運算。`, 'ok');
+      }
+
+    function parseGltfBuffer(buffer, sourcePath) {
+      return new Promise((resolve, reject) => {
+        gltfLoader.parse(
+          buffer,
+          './',
+          (gltf) => resolve(gltf),
+          (error) => reject(error)
+        );
+      }).then((gltf) => attachHeadModel(gltf, sourcePath));
+    }
+
+    async function loadHeadModel() {
+      const candidates = ['head.glb', 'head.GLB'];
+      const failures = [];
+
+      for (const sourcePath of candidates) {
+        try {
+          setModelStatus(`正在載入 ./${sourcePath}...`);
+          const url = `./${sourcePath}?v=${Date.now()}`;
+          const response = await fetch(url, { cache: 'no-store' });
+
+          if (!response.ok) {
+            failures.push(`${sourcePath}: HTTP ${response.status}`);
+            continue;
+          }
+
+          const buffer = await response.arrayBuffer();
+          await parseGltfBuffer(buffer, sourcePath);
+          return;
+        } catch (error) {
+          failures.push(`${sourcePath}: ${error.message || error}`);
+        }
+      }
+
+      setModelStatus(
+        `無法載入 head.glb/head.GLB。請確認 local server 是從 TWS 資料夾啟動。錯誤：${failures.join('；')}`,
+        'error'
+      );
+      console.error('Failed to load head GLB candidates:', failures);
+      attachFallbackHeadModel(failures);
+    }
+
+    loadHeadModel();
+
+    const txGroup = new THREE.Group();
+    scene.add(txGroup);
+
+    const txShell = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.55, 1.15, 10, 20),
+      new THREE.MeshStandardMaterial({
+        color: 0xf7f9ff,
+        roughness: 0.34,
+        metalness: 0.08
+      })
+    );
+    txShell.rotation.z = Math.PI * 0.5;
+    txGroup.add(txShell);
+
+    const txNozzle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.2, 0.28, 0.85, 24),
+      new THREE.MeshStandardMaterial({
+        color: 0x121821,
+        roughness: 0.62,
+        metalness: 0.1
+      })
+    );
+    txNozzle.rotation.z = Math.PI * 0.5;
+    txNozzle.position.x = 0.85;
+    txGroup.add(txNozzle);
+
+    const txGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.23, 24, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffc44f })
+    );
+    txGlow.position.x = -0.75;
+    txGroup.add(txGlow);
+
+    const markerLight = new THREE.PointLight(0xffb743, 18, 22);
+    txGroup.add(markerLight);
+
+    const vertexShader = `
+uniform float u_distance;
+varying float vAttenuation;
+varying float vGain;
+
+void main() {
+    // ====== PIFA 天線輻射場型 (Local Space) ======
+    // +X = boresight (遠離人頭)，-X = 朝向人頭
+    vec3 localDir = normalize(position);
+
+    // 基本角度分解
+    float cosTheta = localDir.x;                          // 與 boresight 的夾角餘弦
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);     // sin(theta)
+    float phi = atan(localDir.z, localDir.y);             // 繞 X 軸的方位角 (H-plane)
+
+    // (a) 主瓣：寬波束 cardioid，朝 +X 方向
+    float mainLobe = pow(max(0.0, 0.5 + 0.5 * cosTheta), 1.2);
+
+    // (b) 後瓣：穿過接地面的洩漏輻射，約主瓣 15%
+    float backLobe = 0.15 * pow(max(0.0, 0.5 - 0.5 * cosTheta), 2.0);
+
+    // (c) E-plane / H-plane 不對稱性
+    float asymmetry = 1.0 + 0.15 * cos(2.0 * phi) * sinTheta * sinTheta;
+
+    // (d) 接地面 null：theta ≈ 90° 時有凹陷
+    float groundNull = 1.0 - 0.35 * pow(sinTheta, 6.0);
+
+    // 原始增益（未乘效率）
+    float rawGain = (mainLobe + backLobe) * asymmetry * groundNull;
+
+    // ====== 近場效率衰減模型 ======
+    // η(d) = η_body + (η_free - η_body) × smoothstep(近場過渡)
+    float etaFree = 0.50;       // 自由空間效率
+    float etaBody = 0.28;       // 貼近人體效率
+    float transWidth = 3.0;     // 近場過渡區寬度
+    float headRadius = 10.0;
+
+    // 距離越近 → efficiency 越低
+    float efficiency = etaBody + (etaFree - etaBody)
+        * smoothstep(headRadius, headRadius + transWidth, u_distance);
+
+    // 效率比 = 當前效率 / 自由空間效率
+    float etaRatio = efficiency / etaFree;
+
+    // 場型半徑 ∝ √(效率比)：功率下降 → 場型物理縮小
+    float baseRadius = 5.0;
+    float scaledRadius = baseRadius * sqrt(etaRatio);
+
+    // 有效增益 = 原始增益 × 效率比：整體色溫往冷色移
+    float effectiveGain = rawGain * etaRatio;
+
+    // 映射到幾何位置
+    float minRadius = 0.15;
+    float pifaGain = minRadius + (1.0 - minRadius) * rawGain;
+    vec3 localPos = localDir * (scaledRadius * pifaGain);
+
+    // ====== 世界座標與碰撞偵測 ======
+    vec3 txCenter = vec3(u_distance, 0.0, 0.0);
+    vec3 worldPos = txCenter + localPos;
+
+    float distToHead = length(worldPos);
+    
+    float atten = 0.0;
+    
+    // 只要頂點進入人頭內部，強制觸發塌陷
+    if (distToHead < headRadius) {
+        float penetration = headRadius - distToHead;
+        atten = smoothstep(0.0, 2.0, penetration);
+        
+        // 高頻扭曲
+        float noise = sin(worldPos.y * 20.0) * cos(worldPos.z * 20.0) * 0.2;
+        
+        // 物理現象：把穿透的頂點，硬推回人頭表面
+        vec3 surfaceNormal = normalize(worldPos);
+        worldPos = surfaceNormal * (headRadius + noise);
+    }
+
+    vAttenuation = atten;
+    vGain = effectiveGain;  // 傳遞效率加權後的增益給 fragment shader
+
+    gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+}
+    `;
+
+    const fragmentShader = `
+varying float vAttenuation;
+varying float vGain;
+
+void main() {
+    // ====== 增益熱力圖：依場型增益著色 ======
+    // 深紫藍 → 藍 → 青 → 黃 → 紅橘
+    float g = clamp(vGain, 0.0, 1.0);
+    vec3 color;
+    
+    if (g < 0.25) {
+        // 深紫藍 → 藍
+        color = mix(vec3(0.06, 0.0, 0.42), vec3(0.0, 0.22, 0.82), g / 0.25);
+    } else if (g < 0.5) {
+        // 藍 → 青
+        color = mix(vec3(0.0, 0.22, 0.82), vec3(0.0, 0.78, 0.82), (g - 0.25) / 0.25);
+    } else if (g < 0.75) {
+        // 青 → 黃
+        color = mix(vec3(0.0, 0.78, 0.82), vec3(1.0, 0.88, 0.0), (g - 0.5) / 0.25);
+    } else {
+        // 黃 → 紅橘
+        color = mix(vec3(1.0, 0.88, 0.0), vec3(1.0, 0.18, 0.0), (g - 0.75) / 0.25);
+    }
+
+    // ====== 碰撞吸收疊加 ======
+    // 穿入人頭的區域 → 強制壓暗到深紫色（介電質能量吸收）
+    vec3 absorbedColor = vec3(0.03, 0.0, 0.28);
+    vec3 finalColor = mix(color, absorbedColor, vAttenuation);
+    
+    // Alpha：低增益區半透明，高增益區較不透明，碰撞區完全不透明
+    float baseAlpha = mix(0.22, 0.62, g);
+    float alpha = mix(baseAlpha, 0.94, vAttenuation);
+    gl_FragColor = vec4(finalColor, alpha);
+}
+    `;
+
+    const patternMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        u_distance: { value: DEFAULT_DISTANCE }
+      },
+      vertexShader,
+      fragmentShader,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide
+    });
+
+    const pattern = new THREE.Mesh(
+      new THREE.SphereGeometry(PATTERN_RADIUS, 96, 64),
+      patternMaterial
+    );
+    scene.add(pattern);
+
+    const patternWire = new THREE.Mesh(
+      new THREE.SphereGeometry(PATTERN_RADIUS * 1.006, 48, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.16,
+        depthWrite: false,
+        depthTest: false
+      })
+    );
+    scene.add(patternWire);
+
+    const orbitPath = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(
+        Array.from({ length: 240 }, (_, i) => {
+          const a = (i / 240) * Math.PI * 2;
+          return new THREE.Vector3(Math.cos(a) * DISTANCE_MIN, 0, Math.sin(a) * DISTANCE_MIN);
+        })
+      ),
+      new THREE.LineBasicMaterial({
+        color: 0xffbe3d,
+        transparent: true,
+        opacity: 0.28
+      })
+    );
+    scene.add(orbitPath);
+
+    const shadowLineMaterial = new THREE.LineDashedMaterial({
+      color: 0xffd27a,
+      dashSize: 0.55,
+      gapSize: 0.32,
+      transparent: true,
+      opacity: 0.74
+    });
+    const shadowLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+      shadowLineMaterial
+    );
+    scene.add(shadowLine);
+
+    const tmpTx = new THREE.Vector3();
+
+    function setLineEndpoints(line, a, b) {
+      const positions = line.geometry.attributes.position;
+      positions.setXYZ(0, a.x, a.y, a.z);
+      positions.setXYZ(1, b.x, b.y, b.z);
+      positions.needsUpdate = true;
+      line.computeLineDistances();
+    }
+
+    function computeEfficiency(distance) {
+      // 與 shader 中完全相同的效率公式
+      // smoothstep(edge0, edge1, x)
+      const t = Math.max(0, Math.min(1, (distance - HEAD_RADIUS) / TRANSITION_WIDTH));
+      const ss = t * t * (3 - 2 * t); // smoothstep
+      return ETA_BODY + (ETA_FREE - ETA_BODY) * ss;
+    }
+
+    function updateTxPosition() {
+      const distance = Number(distanceSlider.value);
+
+      // Shader 用 uniform 算世界座標，Tx 固定在 X 軸上
+      tmpTx.set(distance, 0.0, 0.0);
+
+      // 更新 uniform，讓 vertex shader 知道目前的距離
+      patternMaterial.uniforms.u_distance.value = distance;
+
+      txGroup.position.copy(tmpTx);
+      pattern.position.copy(tmpTx);
+      patternWire.position.copy(tmpTx);
+
+      txGroup.lookAt(0, 0, 0);
+      txGroup.rotateY(Math.PI * 0.5);
+
+      setLineEndpoints(shadowLine, tmpTx, new THREE.Vector3(0, 0, 0));
+
+      // 計算當前效率
+      const eta = computeEfficiency(distance);
+      const etaRatio = eta / ETA_FREE;
+      const currentPatternR = PATTERN_RADIUS * Math.sqrt(etaRatio);
+
+      // 根據效率縮放 wireframe 外框
+      const wireScale = Math.sqrt(etaRatio);
+      patternWire.scale.setScalar(wireScale);
+
+      const couplingRatio = Math.min(0.999, HEAD_RADIUS / distance);
+      const couplingCone = Math.asin(couplingRatio) * 180 / Math.PI;
+      distanceValue.textContent = distance.toFixed(1);
+      txOrbitReadout.textContent = distance.toFixed(1);
+      txReadout.textContent = `${tmpTx.x.toFixed(1)}, ${tmpTx.y.toFixed(1)}, ${tmpTx.z.toFixed(1)}`;
+      shadowReadout.textContent = `±${couplingCone.toFixed(1)}°`;
+      efficiencyReadout.textContent = `${(eta * 100).toFixed(1)}%`;
+      patternRReadout.textContent = currentPatternR.toFixed(2);
+
+      // TRP = Conducted Power + 10 × log10(η)
+      const trpDbm = CONDUCTED_POWER_DBM + 10 * Math.log10(eta);
+      trpReadout.textContent = `${trpDbm.toFixed(1)} dBm`;
+    }
+
+    distanceSlider.addEventListener('input', updateTxPosition);
+    updateTxPosition();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    });
+
+    function animate() {
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
