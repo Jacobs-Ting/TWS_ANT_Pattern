@@ -272,6 +272,44 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
+    .s11-panel {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      z-index: 10;
+      width: min(340px, calc(100vw - 36px));
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(16px);
+    }
+
+    .s11-panel .s11-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 10px;
+    }
+
+    .s11-panel canvas {
+      width: 100% !important;
+      height: 180px !important;
+    }
+
+    @media (max-width: 720px) {
+      .s11-panel {
+        left: 10px;
+        bottom: 10px;
+        width: calc(100vw - 20px);
+      }
+    }
   </style>
 </head>
 <body>
@@ -347,6 +385,16 @@
   </aside>
 
   <div class="corner">拖曳旋轉 · 滾輪縮放 · 右鍵平移</div>
+
+  <div class="s11-panel" aria-label="S11 frequency response">
+    <div class="s11-title">
+      <span>S11 頻率響應</span>
+      <span id="s11Status">Free Space</span>
+    </div>
+    <canvas id="s11Chart"></canvas>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script type="importmap">
     {
@@ -440,6 +488,11 @@
     scene.add(headModelGroup);
 
     function setModelStatus(message, state) {
+      if (state === 'warn' || state === 'error') {
+        modelStatus.style.display = 'none';
+        return;
+      }
+      modelStatus.style.display = 'block';
       modelStatus.textContent = message;
       modelStatus.classList.remove('ok', 'warn', 'error');
       if (state) {
@@ -969,11 +1022,142 @@ void main() {
     distanceSlider.addEventListener('input', updateTxPosition);
     updateTxPosition();
 
+    // ====== S11 頻率響應圖表 (Chart.js) ======
+    const s11StatusEl = document.getElementById('s11Status');
+    const S11_FREQ_MIN = 2350;
+    const S11_FREQ_MAX = 2600;
+    const S11_FREQ_STEP = 10;
+    const S11_A = 0.0015; // 拋物線開口係數
+
+    // 產生固定 X 軸頻率陣列
+    const s11Freqs = [];
+    for (let f = S11_FREQ_MIN; f <= S11_FREQ_MAX; f += S11_FREQ_STEP) {
+      s11Freqs.push(f);
+    }
+
+    // 計算 S11 曲線
+    function computeS11(freqs, fc, s11Min) {
+      return freqs.map(f => {
+        const val = S11_A * (f - fc) * (f - fc) + s11Min;
+        return Math.min(val, 0); // S11 不會超過 0 dB
+      });
+    }
+
+    // 初始化 Chart.js
+    const s11Ctx = document.getElementById('s11Chart').getContext('2d');
+    const s11Chart = new Chart(s11Ctx, {
+      type: 'line',
+      data: {
+        labels: s11Freqs,
+        datasets: [{
+          label: 'S11 (dB)',
+          data: computeS11(s11Freqs, 2500, -15),
+          borderColor: '#ff6b3d',
+          backgroundColor: 'rgba(255, 107, 61, 0.08)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 120 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.parsed.y.toFixed(1)} dB`,
+              title: items => `${items[0].label} MHz`
+            }
+          }
+        },
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: 'Frequency (MHz)',
+              color: '#a8b5c7',
+              font: { size: 11 }
+            },
+            ticks: {
+              color: '#a8b5c7',
+              font: { size: 10 },
+              maxTicksLimit: 6
+            },
+            grid: {
+              color: 'rgba(255,255,255,0.08)'
+            }
+          },
+          y: {
+            title: {
+              display: true,
+              text: 'S11 (dB)',
+              color: '#a8b5c7',
+              font: { size: 11 }
+            },
+            min: -20,
+            max: 0,
+            ticks: {
+              color: '#a8b5c7',
+              font: { size: 10 },
+              stepSize: 5
+            },
+            grid: {
+              color: 'rgba(255,255,255,0.08)'
+            }
+          }
+        }
+      }
+    });
+
+    function updateS11Chart(distance) {
+      // 內插權重 t: 0 (遠場) → 1 (貼近)
+      const t = Math.max(0, Math.min(1, (35.0 - distance) / (35.0 - 10.1)));
+
+      // 動態中心頻率：2500 → 2450 MHz (detuning)
+      const fc = 2500 - 50 * t;
+
+      // 動態共振深度：-15 → -10 dB (loss)
+      const s11Min = -15 + 5 * t;
+
+      // 更新曲線數據
+      s11Chart.data.datasets[0].data = computeS11(s11Freqs, fc, s11Min);
+
+      // 貼近時曲線變成藍色（代表損耗）
+      const r = Math.round(255 * (1 - t * 0.7));
+      const g = Math.round(107 * (1 - t * 0.5));
+      const b = Math.round(61 + 150 * t);
+      s11Chart.data.datasets[0].borderColor = `rgb(${r},${g},${b})`;
+      s11Chart.data.datasets[0].backgroundColor = `rgba(${r},${g},${b},0.08)`;
+
+      s11Chart.update();
+
+      // 更新狀態文字
+      if (t < 0.05) {
+        s11StatusEl.textContent = 'Free Space';
+      } else if (t > 0.95) {
+        s11StatusEl.textContent = `On Head | fc=${fc.toFixed(0)} MHz`;
+      } else {
+        s11StatusEl.textContent = `fc=${fc.toFixed(0)} MHz | ${s11Min.toFixed(1)} dB`;
+      }
+    }
+
+    // 初始化 S11 圖表
+    updateS11Chart(DEFAULT_DISTANCE);
+
+    // 將 S11 更新綁定到滑桿
+    distanceSlider.addEventListener('input', () => {
+      updateS11Chart(Number(distanceSlider.value));
+    });
+
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      s11Chart.resize();
     });
 
     function animate() {
